@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        SparkleCoordinator.shared.start()
         if #available(macOS 13.0, *) {
             LaunchAtLogin.migratePreferenceFromServiceIfNeeded()
             LaunchAtLogin.applyPersistedPreferenceAtLaunch()

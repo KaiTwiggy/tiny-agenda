@@ -14,6 +14,23 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section("Updates") {
+                Button("Check for Updates…") {
+                    SparkleCoordinator.shared.checkForUpdates()
+                }
+                if SparkleCoordinator.isConfiguredForUpdates {
+                    Text("Uses the Sparkle feed URL in the app’s Info.plist. New versions are published via GitHub Releases (see scripts/sparkle-release.md).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    Text("In-app updates are disabled until you set SUFeedURL and SUPublicEDKey for your fork (see scripts/sparkle-release.md), then rebuild TinyAgenda.app.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             Section("Startup") {
                 Toggle("Open at login", isOn: $openAtLogin)
                     .disabled(!launchAtLoginToggleEnabled)

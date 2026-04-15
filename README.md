@@ -57,8 +57,9 @@ Treat ICS content as **untrusted** (display only—no execution of code from the
 ## Releases and distribution
 
 - **From source:** Clone the repo, run `./scripts/build-app.sh`, and open `TinyAgenda.app` locally.
-- **GitHub Releases (optional):** Maintainers may attach a built `.zip` or `.app`. Binaries may be **ad-hoc signed** (`build-app.sh`); Gatekeeper may prompt until the user allows the app. **Notarized** builds require a paid Apple Developer Program workflow not included in this repository.
-- **Version tags:** Semantic versions (e.g. `v1.0.0`) can tag known-good commits for reproducibility.
+- **GitHub Releases:** Push a tag `v*` (e.g. `v1.0.1`). [`.github/workflows/release.yml`](.github/workflows/release.yml) builds `TinyAgenda.app`, zips it, and attaches **`TinyAgenda-vX.Y.Z.zip`** to a GitHub Release. **No Apple Developer account is required** for that workflow.
+- **Optional Developer ID signing:** Set repository secret `MACOS_CODESIGN_IDENTITY` (e.g. `Developer ID Application: Your Name (TEAMID)`) so the release job code-signs the app before zipping. Omit it to ship **ad-hoc** signed builds; Gatekeeper may prompt users until they allow the app.
+- **In-app updates (Sparkle):** Optional. Configure `SUFeedURL` / `SUPublicEDKey` in [`Support/Info.plist`](Support/Info.plist) and maintain an `appcast.xml`. See [`scripts/sparkle-release.md`](scripts/sparkle-release.md) and [`appcast.xml.example`](appcast.xml.example). Optional secret `SPARKLE_EDDSA_PRIVATE_KEY` adds a `sign_update` artifact to the release.
 
 ## Limits
 

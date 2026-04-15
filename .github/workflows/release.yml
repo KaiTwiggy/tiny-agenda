@@ -1,0 +1,91 @@
+# Build TinyAgenda.app for tag v*, zip, attach to a GitHub Release.
+#
+# No Apple Developer account required: omit optional repository secrets.
+# Optional: MACOS_CODESIGN_IDENTITY — Developer ID signing.
+# Optional: SPARKLE_EDDSA_PRIVATE_KEY — Sparkle generate_keys private key for sign_update.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build app bundle
+        run: |
+          chmod +x scripts/build-app.sh
+          ./scripts/build-app.sh
+
+      # Do not use `secrets` in `if:` — GitHub rejects it. Pass via env and branch in shell.
+      - name: Developer ID codesign (optional)
+        env:
+          MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MACOS_CODESIGN_IDENTITY:-}" ]; then
+            echo "MACOS_CODESIGN_IDENTITY not set — skipping Developer ID codesign."
+            exit 0
+          fi
+          APP="$GITHUB_WORKSPACE/TinyAgenda.app"
+          codesign --force --deep --options runtime --sign "$MACOS_CODESIGN_IDENTITY" \
+            "$APP/Contents/Frameworks/Sparkle.framework"
+          codesign --force --deep --options runtime --sign "$MACOS_CODESIGN_IDENTITY" "$APP"
+
+      - name: Create zip
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          ditto -c -k --sequesterRsrc --keepParent TinyAgenda.app "TinyAgenda-${{ github.ref_name }}.zip"
+
+      - name: Download Sparkle tools
+        run: |
+          curl -fsSL -o /tmp/sparkle.tar.xz \
+            "https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/Sparkle-2.6.4.tar.xz"
+          tar -xJf /tmp/sparkle.tar.xz -C /tmp
+          test -x /tmp/Sparkle-2.6.4/bin/sign_update
+
+      - name: Sparkle sign update (optional)
+        env:
+          SPARKLE_EDDSA_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SPARKLE_EDDSA_PRIVATE_KEY:-}" ]; then
+            echo "SPARKLE_EDDSA_PRIVATE_KEY not set — skipping sign_update."
+            exit 0
+          fi
+          printf '%s\n' "$SPARKLE_EDDSA_PRIVATE_KEY" > /tmp/sparkle_eddsa_private
+          chmod 600 /tmp/sparkle_eddsa_private
+          Z="$GITHUB_WORKSPACE/TinyAgenda-${{ github.ref_name }}.zip"
+          /tmp/Sparkle-2.6.4/bin/sign_update "$Z" -f /tmp/sparkle_eddsa_private | tee "$GITHUB_WORKSPACE/sparkle-signature-${{ github.ref_name }}.txt"
+          rm -f /tmp/sparkle_eddsa_private
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+          files: TinyAgenda-${{ github.ref_name }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Sparkle signature to release (optional)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          F="$GITHUB_WORKSPACE/sparkle-signature-${{ github.ref_name }}.txt"
+          if [ ! -f "$F" ]; then
+            echo "No sparkle-signature file — skipping upload."
+            exit 0
+          fi
+          gh release upload "${{ github.ref_name }}" "$F" --clobber

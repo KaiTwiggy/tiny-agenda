@@ -51,6 +51,10 @@ struct MenuBarContentView: View {
 
             Divider()
 
+            Button("Check for Updates…") {
+                SparkleCoordinator.shared.checkForUpdates()
+            }
+
             Button("Settings…") {
                 NSApp.activate(ignoringOtherApps: true)
                 NotificationCenter.default.post(name: .openTinyAgendaSettings, object: nil)

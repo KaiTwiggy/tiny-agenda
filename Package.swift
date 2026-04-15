@@ -7,6 +7,9 @@ let package = Package(
     products: [
         .executable(name: "TinyAgenda", targets: ["TinyAgenda"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.4")
+    ],
     targets: [
         .target(
             name: "TinyAgendaCore",
@@ -14,7 +17,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "TinyAgenda",
-            dependencies: ["TinyAgendaCore"],
+            dependencies: [
+                "TinyAgendaCore",
+                .product(name: "Sparkle", package: "Sparkle")
+            ],
             path: "Sources/TinyAgenda"
         ),
         .testTarget(
