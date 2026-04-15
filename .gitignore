@@ -1,0 +1,8 @@
+.DS_Store
+.build/
+.swiftpm/
+TinyAgenda.app/
+CalendarReminder.app/
+*.xcuserstate
+*.plist.local
+Secrets.xcconfig
