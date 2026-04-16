@@ -4,6 +4,8 @@ import AppKit
 let out = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "master1024.png"
 let w = 1024
 let h = 1024
+let wf = CGFloat(w)
+let hf = CGFloat(h)
 
 guard
     let rep = NSBitmapImageRep(
@@ -25,12 +27,15 @@ else {
 
 NSGraphicsContext.saveGraphicsState()
 NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-NSGraphicsContext.current?.isFlipped = true
 guard let ctx = NSGraphicsContext.current?.cgContext else { exit(1) }
 
-let rect = CGRect(x: 0, y: 0, width: w, height: h)
+/// Top-left origin (matches SVG), works without `isFlipped` (read-only on recent SDKs).
+ctx.saveGState()
+ctx.translateBy(x: 0, y: hf)
+ctx.scaleBy(x: 1, y: -1)
 
-// Squircle clip
+let rect = CGRect(x: 0, y: 0, width: wf, height: hf)
+
 let bgPath = NSBezierPath(roundedRect: rect.insetBy(dx: 32, dy: 32), xRadius: 230, yRadius: 230)
 bgPath.addClip()
 
@@ -41,7 +46,7 @@ let colors = [
 ]
 let loc: [CGFloat] = [0, 0.48, 1]
 let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors as CFArray, locations: loc)!
-ctx.drawLinearGradient(grad, start: .zero, end: CGPoint(x: w, y: h), options: [])
+ctx.drawLinearGradient(grad, start: .zero, end: CGPoint(x: wf, y: hf), options: [])
 
 ctx.resetClip()
 bgPath.addClip()
@@ -54,12 +59,14 @@ let glow = CGGradient(
     ] as CFArray,
     locations: [0, 0.45, 1]
 )!
+let glowCX = wf * 0.28
+let glowCY = hf * 0.22
 ctx.drawRadialGradient(
     glow,
-    startCenter: CGPoint(x: w * 0.28, y: h * 0.22),
+    startCenter: CGPoint(x: glowCX, y: glowCY),
     startRadius: 0,
-    endCenter: CGPoint(x: w * 0.28, y: h * 0.22),
-    endRadius: h * 0.75,
+    endCenter: CGPoint(x: glowCX, y: glowCY),
+    endRadius: hf * 0.75,
     options: []
 )
 
@@ -73,21 +80,26 @@ let sea = CGGradient(
     ] as CFArray,
     locations: [0, 1]
 )!
+let seaCX = wf * 0.82
+let seaCY = hf * 0.92
 ctx.drawRadialGradient(
     sea,
-    startCenter: CGPoint(x: w * 0.82, y: h * 0.92),
+    startCenter: CGPoint(x: seaCX, y: seaCY),
     startRadius: 0,
-    endCenter: CGPoint(x: w * 0.82, y: h * 0.92),
-    endRadius: h * 0.55,
+    endCenter: CGPoint(x: seaCX, y: seaCY),
+    endRadius: hf * 0.55,
     options: []
 )
 
+ctx.restoreGState()
 NSGraphicsContext.restoreGraphicsState()
 
 NSGraphicsContext.saveGraphicsState()
 NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-NSGraphicsContext.current?.isFlipped = true
 guard let ctx2 = NSGraphicsContext.current?.cgContext else { exit(1) }
+ctx2.saveGState()
+ctx2.translateBy(x: 0, y: hf)
+ctx2.scaleBy(x: 1, y: -1)
 
 let sheet = CGRect(x: 152, y: 208, width: 720, height: 640)
 ctx2.setFillColor(NSColor(red: 0.98, green: 0.96, blue: 1.0, alpha: 0.96).cgColor)
@@ -115,13 +127,13 @@ for row in 0 ..< 3 {
     for col in 0 ..< 5 {
         let x = startX + CGFloat(col) * (cell + gap)
         let y = startY + CGFloat(row) * (cell + gap)
-		let c = CGRect(x: x, y: y, width: cell, height: cell)
-		let r = NSBezierPath(roundedRect: c, xRadius: 20, yRadius: 20)
-		if row == 1 && col == 1 {
-			ctx2.setFillColor(NSColor(red: 0.96, green: 0.45, blue: 0.71, alpha: 1).cgColor)
-		} else {
-			ctx2.setFillColor(NSColor(red: 0.78, green: 0.82, blue: 0.99, alpha: 0.88).cgColor)
-		}
+        let c = CGRect(x: x, y: y, width: cell, height: cell)
+        let r = NSBezierPath(roundedRect: c, xRadius: 20, yRadius: 20)
+        if row == 1 && col == 1 {
+            ctx2.setFillColor(NSColor(red: 0.96, green: 0.45, blue: 0.71, alpha: 1).cgColor)
+        } else {
+            ctx2.setFillColor(NSColor(red: 0.78, green: 0.82, blue: 0.99, alpha: 0.88).cgColor)
+        }
         ctx2.addPath(r.cgPath)
         ctx2.fillPath()
     }
@@ -151,6 +163,7 @@ ctx2.setFillColor(NSColor(red: 0.99, green: 0.90, blue: 0.60, alpha: 0.95).cgCol
 ctx2.addPath(star.cgPath)
 ctx2.fillPath()
 
+ctx2.restoreGState()
 NSGraphicsContext.restoreGraphicsState()
 
 guard let data = rep.representation(using: .png, properties: [:]) else {
