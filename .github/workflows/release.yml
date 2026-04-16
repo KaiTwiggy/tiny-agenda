@@ -24,9 +24,13 @@ permissions:
 jobs:
   build:
     runs-on: macos-14
+    # Normal run: ~5–25 min. Much longer usually means a hang — cancel and check logs; see scripts/build-app.sh + timing steps.
+    timeout-minutes: 45
     env:
       # Tag push: use ref name. Manual run: use the tag you type in the UI.
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      # Prefer GitHub ZIP archives for tagged deps instead of full git working copies (smaller / faster; helps huge repos like Sparkle).
+      SWIFTPM_USE_SOURCE_ARCHIVES: "1"
     steps:
       - name: Verify tag exists on GitHub (manual runs only)
         if: github.event_name == 'workflow_dispatch'
@@ -49,10 +53,33 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
+      # Speed up Sparkle (large SPM binary) on repeat runs; first run can still take several minutes.
+      - name: Cache Swift build
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            /Users/runner/Library/Caches/org.swift.swiftpm
+            /Users/runner/Library/org.swift.swiftpm
+          key: ${{ runner.os }}-swift-${{ hashFiles('Package.swift', 'Package.resolved', 'Sources/**/*.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-swift-
+
       - name: Build app bundle
         run: |
+          set -euo pipefail
           chmod +x scripts/build-app.sh
+          echo "::group::Package pins (if Sparkle version here ≠ Package.swift, this tag points at the wrong commit)"
+          cat Package.resolved 2>/dev/null || echo "No Package.resolved — resolve may pick a newer Sparkle and take much longer."
+          echo "::endgroup::"
+          echo "::notice::Resolving Swift packages (Sparkle is large; first line may show [1/N] object counts — use SWIFTPM_USE_SOURCE_ARCHIVES + committed Package.resolved)."
+          date -u "+%Y-%m-%dT%H:%M:%SZ resolve start"
+          swift package resolve -v
+          date -u "+%Y-%m-%dT%H:%M:%SZ resolve done"
+          echo "::notice::Compiling release (linking Sparkle may take several more minutes with sparse logs — not frozen)."
+          date -u "+%Y-%m-%dT%H:%M:%SZ build-app start"
           ./scripts/build-app.sh
+          date -u "+%Y-%m-%dT%H:%M:%SZ build-app done"
 
       # Do not use `secrets` in `if:` — GitHub rejects it. Pass via env and branch in shell.
       - name: Developer ID codesign (optional)

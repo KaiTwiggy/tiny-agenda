@@ -3,7 +3,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 swift build -c release
-BIN_PATH="$(swift build -c release --show-bin-path)/TinyAgenda"
+BIN_DIR="$(swift build -c release --show-bin-path)"
+BIN_PATH="${BIN_DIR}/TinyAgenda"
 APP="$ROOT/TinyAgenda.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
@@ -14,11 +15,25 @@ chmod +x "$APP/Contents/MacOS/TinyAgenda"
 # Sparkle (SPM binary target) must be embedded in the app bundle.
 mkdir -p "$APP/Contents/Frameworks"
 SPARKLE_SRC=""
-while IFS= read -r -d '' f; do SPARKLE_SRC="$f"; break; done < <(
-  find "$ROOT/.build" \( -path "*release*" -o -path "*Release*" \) -type d -name "Sparkle.framework" -print0 2>/dev/null
-)
+# Prefer paths next to the built binary (fast). Avoid unbounded find over .build — restored CI caches can be huge and find crawls for minutes.
+for candidate in "${BIN_DIR}/Sparkle.framework" "${BIN_DIR}/../Sparkle.framework"; do
+  if [[ -d "${candidate}" ]]; then SPARKLE_SRC="${candidate}"; break; fi
+done
 if [[ -z "${SPARKLE_SRC}" ]]; then
-  XCFW="$(find "$ROOT/.build" -type d -name "Sparkle.xcframework" 2>/dev/null | head -1 || true)"
+  for sub in arm64-apple-macosx x86_64-apple-macosx; do
+    p="${ROOT}/.build/${sub}/release/Sparkle.framework"
+    if [[ -d "${p}" ]]; then SPARKLE_SRC="${p}"; break; fi
+  done
+fi
+if [[ -z "${SPARKLE_SRC}" ]] && [[ -d "${ROOT}/.build/artifacts" ]]; then
+  SPARKLE_SRC="$(find "${ROOT}/.build/artifacts" -type d -name "Sparkle.framework" 2>/dev/null | head -1 || true)"
+fi
+if [[ -z "${SPARKLE_SRC}" ]]; then
+  # Last resort: bounded depth only — full-tree find on a large restored .build cache can take a very long time on CI.
+  SPARKLE_SRC="$(find "${ROOT}/.build" -maxdepth 22 -type d -name "Sparkle.framework" 2>/dev/null | head -1 || true)"
+fi
+if [[ -z "${SPARKLE_SRC}" ]]; then
+  XCFW="$(find "${ROOT}/.build" -maxdepth 14 -type d -name "Sparkle.xcframework" 2>/dev/null | head -1 || true)"
   if [[ -n "${XCFW}" ]]; then
     for slice in "macos-arm64_x86_64" "macos-arm64" "macos-x86_64"; do
       if [[ -d "${XCFW}/${slice}/Sparkle.framework" ]]; then

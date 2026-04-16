@@ -8,7 +8,8 @@ let package = Package(
         .executable(name: "TinyAgenda", targets: ["TinyAgenda"])
     ],
     dependencies: [
-        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.4")
+        // Exact pin: avoids surprise upgrades on CI and matches release.yml Sparkle tools (2.6.4).
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: Version(2, 6, 4))
     ],
     targets: [
         .target(
