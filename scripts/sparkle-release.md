@@ -17,9 +17,13 @@ Set **`SUFeedURL`** in `Support/Info.plist` to an **HTTPS** URL that serves your
 
 `https://raw.githubusercontent.com/<you>/tiny-agenda/main/appcast.xml`
 
-Commit `appcast.xml` to the repo (or host it elsewhere). After each release, add a new `<item>` with the version, download URL to the release zip, and Sparkle signature (from `sign_update` output or the `sparkle-signature-v*.txt` artifact on the GitHub Release).
+Use your **default branch** name in the path if it is not `main`.
 
-See Sparkle’s [Publishing an update](https://sparkle-project.org/documentation/publishing/) and `generate_appcast` in the Sparkle distribution for automation.
+Commit a baseline **`appcast.xml`** at the repo root (an empty `<channel>` is valid). **After each tagged release**, if the repository secret **`SPARKLE_EDDSA_PRIVATE_KEY`** is set, the [Release workflow](../.github/workflows/release.yml) runs **`scripts/update-appcast.py`**, commits an `<item>` (zip URL, length, `sparkle:edSignature`) to the default branch, and pushes — no manual appcast edit.
+
+Without the secret, add `<item>` entries yourself using `sign_update` output or the `sparkle-signature-v*.txt` artifact on the GitHub Release.
+
+See Sparkle’s [Publishing an update](https://sparkle-project.org/documentation/publishing/) and `generate_appcast` in the Sparkle distribution for more options.
 
 ## 3. GitHub Actions
 
@@ -27,9 +31,9 @@ Workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml) run
 
 - Builds and zips **`TinyAgenda.app`**.
 - **Optional** `MACOS_CODESIGN_IDENTITY` — Developer ID signing (paid Apple Developer Program).
-- **Optional** `SPARKLE_EDDSA_PRIVATE_KEY` — signs the zip for Sparkle (`sign_update`).
+- **Optional** `SPARKLE_EDDSA_PRIVATE_KEY` — signs the zip for Sparkle (`sign_update`) and **updates/commits `appcast.xml`** on the default branch.
 
-Without Apple secrets, you still get a release zip; Gatekeeper may prompt users until they allow the app. Without Sparkle secrets, skip EdDSA signing and update `appcast.xml` manually if you use Sparkle later.
+Without Apple secrets, you still get a release zip; Gatekeeper may prompt users until they allow the app. Without `SPARKLE_EDDSA_PRIVATE_KEY`, there is no EdDSA signature and **no automatic appcast commit** — add appcast items manually or skip Sparkle updates.
 
 ## 4. Version numbers
 

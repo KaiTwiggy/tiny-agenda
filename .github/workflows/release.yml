@@ -53,6 +53,14 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
+      - name: Verify appcast.xml (Sparkle feed)
+        run: |
+          set -euo pipefail
+          if [[ ! -f appcast.xml ]]; then
+            echo "::error::appcast.xml is missing. Support/Info.plist SUFeedURL expects this file on the default branch (GitHub raw URL). Without it, Check for Updates returns a generic network error."
+            exit 1
+          fi
+
       # Speed up Sparkle (large SPM binary) on repeat runs; first run can still take several minutes.
       - name: Cache Swift build
         uses: actions/cache@v4
@@ -162,3 +170,54 @@ jobs:
             exit 0
           fi
           gh release upload "$RELEASE_TAG" "$F" --clobber
+
+      # Commit appcast item so SUFeedURL (raw GitHub) lists this release. Requires SPARKLE_EDDSA_PRIVATE_KEY (same as sign_update).
+      - name: Update appcast.xml on default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SIG_FILE="$GITHUB_WORKSPACE/sparkle-signature-${RELEASE_TAG}.txt"
+          if [[ ! -f "$SIG_FILE" ]]; then
+            echo "No Sparkle signature — skipping appcast update (set repository secret SPARKLE_EDDSA_PRIVATE_KEY)."
+            exit 0
+          fi
+          APP_PLIST="$GITHUB_WORKSPACE/TinyAgenda.app/Contents/Info.plist"
+          if [[ ! -f "$APP_PLIST" ]]; then
+            echo "::error::TinyAgenda.app missing; cannot read versions for appcast."
+            exit 1
+          fi
+          SHORT=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")
+          BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")
+          MINOS=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP_PLIST")
+          ZIP="$GITHUB_WORKSPACE/TinyAgenda-${RELEASE_TAG}.zip"
+          LEN=$(stat -f%z "$ZIP")
+          REPO="${{ github.repository }}"
+          ZIP_URL="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/TinyAgenda-${RELEASE_TAG}.zip"
+          cd "$GITHUB_WORKSPACE"
+          git fetch origin "$DEFAULT_BRANCH"
+          if ! git show "origin/${DEFAULT_BRANCH}:appcast.xml" > appcast.xml; then
+            echo "::error::Could not read appcast.xml from origin/${DEFAULT_BRANCH}. Add appcast.xml to that branch first."
+            exit 1
+          fi
+          python3 scripts/update-appcast.py \
+            --appcast appcast.xml \
+            --short-version "$SHORT" \
+            --build-version "$BUILD" \
+            --min-os "$MINOS" \
+            --zip-url "$ZIP_URL" \
+            --zip-length "$LEN" \
+            --signature-file "$SIG_FILE"
+          cp appcast.xml /tmp/appcast.updated.xml
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git checkout -f "$DEFAULT_BRANCH"
+          cp /tmp/appcast.updated.xml appcast.xml
+          git add appcast.xml
+          if git diff --cached --quiet; then
+            echo "appcast.xml unchanged after update — nothing to commit."
+            exit 0
+          fi
+          git commit -m "chore(sparkle): appcast for ${RELEASE_TAG}"
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${DEFAULT_BRANCH}"

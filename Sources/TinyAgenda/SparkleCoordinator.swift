@@ -112,7 +112,10 @@ extension SparkleCoordinator: SPUUpdaterDelegate {
             if self.isPlaceholderFeedURL {
                 return
             }
-            NSLog("TinyAgenda Sparkle: failed to load appcast: \(error.localizedDescription)")
+            let ns = error as NSError
+            NSLog(
+                "TinyAgenda Sparkle: failed to load appcast: \(ns.localizedDescription) (domain=\(ns.domain) code=\(ns.code) userInfo=\(ns.userInfo))"
+            )
         }
     }
 
