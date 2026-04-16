@@ -10,6 +10,13 @@ on:
   push:
     tags:
       - "v*"
+  # Run from: Actions → Release → “Run workflow” (e.g. after amending a tag; force-push often won’t re-fire tag events).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing version tag to build (e.g. v1.0.1). Must already exist on the remote."
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -17,9 +24,14 @@ permissions:
 jobs:
   build:
     runs-on: macos-14
+    env:
+      # Tag push: use ref name. Manual run: use the tag you type in the UI.
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
       - name: Build app bundle
         run: |
@@ -45,7 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
-          ditto -c -k --sequesterRsrc --keepParent TinyAgenda.app "TinyAgenda-${{ github.ref_name }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent TinyAgenda.app "TinyAgenda-${RELEASE_TAG}.zip"
 
       - name: Download Sparkle tools
         run: |
@@ -65,8 +77,8 @@ jobs:
           fi
           printf '%s\n' "$SPARKLE_EDDSA_PRIVATE_KEY" > /tmp/sparkle_eddsa_private
           chmod 600 /tmp/sparkle_eddsa_private
-          Z="$GITHUB_WORKSPACE/TinyAgenda-${{ github.ref_name }}.zip"
-          /tmp/Sparkle-2.6.4/bin/sign_update "$Z" -f /tmp/sparkle_eddsa_private | tee "$GITHUB_WORKSPACE/sparkle-signature-${{ github.ref_name }}.txt"
+          Z="$GITHUB_WORKSPACE/TinyAgenda-${RELEASE_TAG}.zip"
+          /tmp/Sparkle-2.6.4/bin/sign_update "$Z" -f /tmp/sparkle_eddsa_private | tee "$GITHUB_WORKSPACE/sparkle-signature-${RELEASE_TAG}.txt"
           rm -f /tmp/sparkle_eddsa_private
 
       - name: Publish GitHub Release
@@ -74,7 +86,8 @@ jobs:
         with:
           draft: false
           generate_release_notes: true
-          files: TinyAgenda-${{ github.ref_name }}.zip
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: TinyAgenda-${{ env.RELEASE_TAG }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -83,9 +96,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          F="$GITHUB_WORKSPACE/sparkle-signature-${{ github.ref_name }}.txt"
+          F="$GITHUB_WORKSPACE/sparkle-signature-${RELEASE_TAG}.txt"
           if [ ! -f "$F" ]; then
             echo "No sparkle-signature file — skipping upload."
             exit 0
           fi
-          gh release upload "${{ github.ref_name }}" "$F" --clobber
+          gh release upload "$RELEASE_TAG" "$F" --clobber

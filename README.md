@@ -58,8 +58,21 @@ Treat ICS content as **untrusted** (display only—no execution of code from the
 
 - **From source:** Clone the repo, run `./scripts/build-app.sh`, and open `TinyAgenda.app` locally.
 - **GitHub Releases:** Push a tag `v*` (e.g. `v1.0.1`). [`.github/workflows/release.yml`](.github/workflows/release.yml) builds `TinyAgenda.app`, zips it, and attaches **`TinyAgenda-vX.Y.Z.zip`** to a GitHub Release. **No Apple Developer account is required** for that workflow.
+- **Re-run without a new tag:** Amending and force-pushing the **same** tag often does **not** trigger workflows again. You can trigger a release build manually (see below).
 - **Optional Developer ID signing:** Set repository secret `MACOS_CODESIGN_IDENTITY` (e.g. `Developer ID Application: Your Name (TEAMID)`) so the release job code-signs the app before zipping. Omit it to ship **ad-hoc** signed builds; Gatekeeper may prompt users until they allow the app.
 - **In-app updates (Sparkle):** Optional. Configure `SUFeedURL` / `SUPublicEDKey` in [`Support/Info.plist`](Support/Info.plist) and maintain an `appcast.xml`. See [`scripts/sparkle-release.md`](scripts/sparkle-release.md) and [`appcast.xml.example`](appcast.xml.example). Optional secret `SPARKLE_EDDSA_PRIVATE_KEY` adds a `sign_update` artifact to the release.
+
+### Manual “Run workflow” (when the button is missing or tag push didn’t fire)
+
+The **Release** workflow defines `workflow_dispatch` so you can run it from the browser. You only get a **Run workflow** button if GitHub sees that definition on your repo’s **default branch** (usually `merge` your branch to `main` / `master` first).
+
+1. Open the repo on GitHub → **Actions**.
+2. In the **left sidebar**, under **Workflows**, click **Release** (the workflow *name*, not a single past run).  
+   - If you only open a run from the middle list, the manual trigger is **not** shown—you must select the workflow in the sidebar.
+3. On the right, open the **Run workflow** dropdown (branch is usually `main`; ignore it—the important input is **tag**).
+4. Enter the **existing** tag (e.g. `v1.0.1`) and confirm **Run workflow**.
+
+**Still no button?** Then the commit that adds `workflow_dispatch` to [`.github/workflows/release.yml`](.github/workflows/release.yml) is almost certainly **not** on the default branch yet—merge or push it there. You also need **Write** access to the repository. Organization owners can disable workflow dispatch via policies.
 
 ## Limits
 
