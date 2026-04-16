@@ -75,26 +75,36 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           ditto -c -k --sequesterRsrc --keepParent TinyAgenda.app "TinyAgenda-${RELEASE_TAG}.zip"
 
-      - name: Download Sparkle tools
-        run: |
-          curl -fsSL -o /tmp/sparkle.tar.xz \
-            "https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/Sparkle-2.6.4.tar.xz"
-          tar -xJf /tmp/sparkle.tar.xz -C /tmp
-          test -x /tmp/Sparkle-2.6.4/bin/sign_update
-
+      # Download Sparkle only when signing (same version as Package.swift). Use find — tarball layout can vary.
       - name: Sparkle sign update (optional)
         env:
           SPARKLE_EDDSA_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}
+          SPARKLE_VERSION: "2.6.4"
         run: |
           set -euo pipefail
           if [ -z "${SPARKLE_EDDSA_PRIVATE_KEY:-}" ]; then
-            echo "SPARKLE_EDDSA_PRIVATE_KEY not set — skipping sign_update."
+            echo "SPARKLE_EDDSA_PRIVATE_KEY not set — skipping Sparkle download and sign_update."
             exit 0
           fi
+          SPARKLE_URL="https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          echo "Downloading ${SPARKLE_URL}"
+          curl -fSL --retry 3 --retry-delay 2 -o /tmp/sparkle.tar.xz "$SPARKLE_URL"
+          file /tmp/sparkle.tar.xz
+          rm -rf /tmp/sparkle-extract
+          mkdir -p /tmp/sparkle-extract
+          tar -xJf /tmp/sparkle.tar.xz -C /tmp/sparkle-extract
+          SIGN_UPDATE="$(find /tmp/sparkle-extract -name sign_update -type f | head -1)"
+          if [ -z "${SIGN_UPDATE}" ]; then
+            echo "::error::sign_update not found after extracting Sparkle tarball. Listing extract dir:"
+            find /tmp/sparkle-extract -type f | head -50 || true
+            exit 1
+          fi
+          chmod +x "$SIGN_UPDATE"
+          echo "Using sign_update at ${SIGN_UPDATE}"
           printf '%s\n' "$SPARKLE_EDDSA_PRIVATE_KEY" > /tmp/sparkle_eddsa_private
           chmod 600 /tmp/sparkle_eddsa_private
           Z="$GITHUB_WORKSPACE/TinyAgenda-${RELEASE_TAG}.zip"
-          /tmp/Sparkle-2.6.4/bin/sign_update "$Z" -f /tmp/sparkle_eddsa_private | tee "$GITHUB_WORKSPACE/sparkle-signature-${RELEASE_TAG}.txt"
+          "$SIGN_UPDATE" "$Z" -f /tmp/sparkle_eddsa_private | tee "$GITHUB_WORKSPACE/sparkle-signature-${RELEASE_TAG}.txt"
           rm -f /tmp/sparkle_eddsa_private
 
       - name: Publish GitHub Release
