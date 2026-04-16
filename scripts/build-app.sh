@@ -48,6 +48,13 @@ if [[ -z "${SPARKLE_SRC}" ]]; then
   exit 1
 fi
 rsync -a "$SPARKLE_SRC" "$APP/Contents/Frameworks/"
+
+# SwiftPM links Sparkle as @rpath/Sparkle.framework/...; dyld only finds the embedded copy if this rpath exists.
+BINARY="$APP/Contents/MacOS/TinyAgenda"
+if ! otool -l "$BINARY" 2>/dev/null | grep -q 'executable_path/../Frameworks'; then
+  install_name_tool -add_rpath "@executable_path/../Frameworks" "$BINARY"
+fi
+
 # Ad-hoc sign embedded frameworks first, then the app (Sparkle XPC helpers live inside the framework).
 while IFS= read -r -d '' f; do
   codesign --force --sign - "$f" 2>/dev/null || true

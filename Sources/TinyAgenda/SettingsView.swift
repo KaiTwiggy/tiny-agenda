@@ -3,6 +3,7 @@ import AppKit
 
 struct SettingsView: View {
     @ObservedObject var viewModel: CalendarViewModel
+    @ObservedObject private var sparkle = SparkleCoordinator.shared
     @State private var urlDraft: String = ""
     @State private var saveError: String?
 
@@ -15,9 +16,26 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Updates") {
-                Button("Check for Updates…") {
+                LabeledContent("Current version") {
+                    Text(appVersionDisplay)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                Button("Update version now") {
                     SparkleCoordinator.shared.checkForUpdates()
                 }
+                LabeledContent("Last checked for update") {
+                    Text(lastUpdateCheckDisplay)
+                        .foregroundStyle(.secondary)
+                }
+                Toggle(
+                    "Turn off automatic update checks",
+                    isOn: Binding(
+                        get: { !sparkle.automaticallyChecksForUpdates },
+                        set: { off in sparkle.setAutomaticallyChecksForUpdates(!off) }
+                    )
+                )
+                .disabled(!SparkleCoordinator.isConfiguredForUpdates)
                 if SparkleCoordinator.isConfiguredForUpdates {
                     Text("Uses the Sparkle feed URL in the app’s Info.plist. New versions are published via GitHub Releases (see scripts/sparkle-release.md).")
                         .font(.caption)
@@ -207,12 +225,37 @@ struct SettingsView: View {
         .onAppear {
             launchAtLoginReady = false
             urlDraft = viewModel.feedURLString
+            sparkle.refreshUpdateMetadata()
             refreshLaunchAtLoginState()
             launchAtLoginReady = true
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshLaunchAtLoginState()
+            sparkle.refreshUpdateMetadata()
         }
+    }
+
+    private var appVersionDisplay: String {
+        let short =
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        if let build, !build.isEmpty {
+            return "\(short) (\(build))"
+        }
+        return short
+    }
+
+    private var lastUpdateCheckDisplay: String {
+        guard SparkleCoordinator.isConfiguredForUpdates else {
+            return "—"
+        }
+        guard let date = sparkle.lastUpdateCheckDate else {
+            return "Never"
+        }
+        let df = DateFormatter()
+        df.dateStyle = .medium
+        df.timeStyle = .short
+        return df.string(from: date)
     }
 
     private var launchAtLoginToggleEnabled: Bool {

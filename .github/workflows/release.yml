@@ -80,6 +80,13 @@ jobs:
           date -u "+%Y-%m-%dT%H:%M:%SZ build-app start"
           ./scripts/build-app.sh
           date -u "+%Y-%m-%dT%H:%M:%SZ build-app done"
+          F="$GITHUB_WORKSPACE/TinyAgenda.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"
+          if [[ ! -f "$F" ]]; then
+            echo "::error::Sparkle.framework missing from the app bundle (dyld will abort at launch). Re-run build-app.sh locally and ensure Sparkle is embedded."
+            ls -la "$GITHUB_WORKSPACE/TinyAgenda.app/Contents/Frameworks" || true
+            exit 1
+          fi
+          echo "OK: embedded Sparkle at $F"
 
       # Do not use `secrets` in `if:` — GitHub rejects it. Pass via env and branch in shell.
       - name: Developer ID codesign (optional)

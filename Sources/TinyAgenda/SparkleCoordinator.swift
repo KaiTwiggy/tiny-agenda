@@ -1,13 +1,29 @@
 import AppKit
+import Combine
 import Foundation
 import Sparkle
 
 /// Owns Sparkle’s `SPUStandardUpdaterController` and exposes “Check for Updates…”.
 @MainActor
-final class SparkleCoordinator: NSObject, SPUUpdaterDelegate {
+final class SparkleCoordinator: NSObject, ObservableObject {
     static let shared = SparkleCoordinator()
 
+    /// Mirrored from Sparkle (`SULastCheckTime` / `lastUpdateCheckDate`).
+    @Published private(set) var lastUpdateCheckDate: Date? = UserDefaults.standard.object(forKey: "SULastCheckTime") as? Date
+    /// Mirrored from `SPUUpdater.automaticallyChecksForUpdates` (`SUEnableAutomaticChecks`).
+    @Published private(set) var automaticallyChecksForUpdates: Bool = SparkleCoordinator.readAutomaticChecksFromDefaults()
+
     private var controller: SPUStandardUpdaterController?
+
+    private static func readAutomaticChecksFromDefaults() -> Bool {
+        if UserDefaults.standard.object(forKey: "SUEnableAutomaticChecks") != nil {
+            return UserDefaults.standard.bool(forKey: "SUEnableAutomaticChecks")
+        }
+        if let plist = Bundle.main.object(forInfoDictionaryKey: "SUEnableAutomaticChecks") as? Bool {
+            return plist
+        }
+        return true
+    }
 
     /// `true` when `SUPublicEDKey` / `SUFeedURL` are set for your distribution (see README).
     static var isConfiguredForUpdates: Bool {
@@ -29,7 +45,10 @@ final class SparkleCoordinator: NSObject, SPUUpdaterDelegate {
 
     /// Starts automatic update checks when Sparkle keys and feed URL are configured.
     func start() {
-        guard controller == nil else { return }
+        guard controller == nil else {
+            syncPublishedFromUpdater()
+            return
+        }
         guard Self.isConfiguredForUpdates else {
             return
         }
@@ -38,6 +57,29 @@ final class SparkleCoordinator: NSObject, SPUUpdaterDelegate {
             updaterDelegate: self,
             userDriverDelegate: nil
         )
+        syncPublishedFromUpdater()
+    }
+
+    /// Call when opening Settings so version metadata matches Sparkle’s updater.
+    func refreshUpdateMetadata() {
+        start()
+        syncPublishedFromUpdater()
+    }
+
+    func setAutomaticallyChecksForUpdates(_ value: Bool) {
+        start()
+        controller?.updater.automaticallyChecksForUpdates = value
+        automaticallyChecksForUpdates = controller?.updater.automaticallyChecksForUpdates ?? value
+    }
+
+    private func syncPublishedFromUpdater() {
+        guard let updater = controller?.updater else {
+            lastUpdateCheckDate = UserDefaults.standard.object(forKey: "SULastCheckTime") as? Date
+            automaticallyChecksForUpdates = Self.readAutomaticChecksFromDefaults()
+            return
+        }
+        lastUpdateCheckDate = updater.lastUpdateCheckDate
+        automaticallyChecksForUpdates = updater.automaticallyChecksForUpdates
     }
 
     func checkForUpdates() {
@@ -55,17 +97,28 @@ final class SparkleCoordinator: NSObject, SPUUpdaterDelegate {
         controller?.checkForUpdates(nil)
     }
 
-    func updater(_ updater: SPUUpdater, didFailToLoadAppcastWithError error: Error) {
-        if _isPlaceholderFeedURL {
-            return
-        }
-        NSLog("TinyAgenda Sparkle: failed to load appcast: \(error.localizedDescription)")
-    }
-
-    private var _isPlaceholderFeedURL: Bool {
+    private var isPlaceholderFeedURL: Bool {
         guard let url = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String else {
             return true
         }
         return url.contains("YOUR_GITHUB") || url.contains("OWNER/REPO")
+    }
+}
+
+// `SPUUpdaterDelegate` is not MainActor-isolated; Sparkle may call these from its own queues.
+extension SparkleCoordinator: SPUUpdaterDelegate {
+    nonisolated func updater(_ updater: SPUUpdater, didFailToLoadAppcastWithError error: Error) {
+        Task { @MainActor in
+            if self.isPlaceholderFeedURL {
+                return
+            }
+            NSLog("TinyAgenda Sparkle: failed to load appcast: \(error.localizedDescription)")
+        }
+    }
+
+    nonisolated func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        Task { @MainActor in
+            self.lastUpdateCheckDate = updater.lastUpdateCheckDate
+        }
     }
 }
