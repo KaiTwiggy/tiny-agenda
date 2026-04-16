@@ -70,7 +70,7 @@ The **Release** workflow defines `workflow_dispatch` so you can run it from the 
 2. In the **left sidebar**, under **Workflows**, click **Release** (the workflow *name*, not a single past run).  
    - If you only open a run from the middle list, the manual trigger is **not** shown—you must select the workflow in the sidebar.
 3. On the right, open the **Run workflow** dropdown (branch is usually `main`; ignore it—the important input is **tag**).
-4. Enter the **existing** tag (e.g. `v1.0.1`) and confirm **Run workflow**.
+4. Enter the **exact** tag name that already exists on GitHub (e.g. `v1.0.0`). It must match `git tag` / `git push origin <tag>` — typos like `v1.0.0.0` vs `v1.0.0` will fail checkout.
 
 **Still no button?** Then the commit that adds `workflow_dispatch` to [`.github/workflows/release.yml`](.github/workflows/release.yml) is almost certainly **not** on the default branch yet—merge or push it there. You also need **Write** access to the repository. Organization owners can disable workflow dispatch via policies.
 

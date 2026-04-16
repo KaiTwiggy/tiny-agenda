@@ -28,6 +28,22 @@ jobs:
       # Tag push: use ref name. Manual run: use the tag you type in the UI.
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
     steps:
+      - name: Verify tag exists on GitHub (manual runs only)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TOKEN="${{ secrets.GITHUB_TOKEN }}"
+          URL="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if ! git ls-remote "$URL" "refs/tags/${TAG}" | grep -q .; then
+            echo "::error::Tag '${TAG}' was not found on GitHub (no refs/tags/${TAG})."
+            echo "Create it on a commit and push: git tag ${TAG} && git push origin ${TAG}"
+            echo "Check spelling — e.g. v1.0.0 is not the same as v1.0.0.0."
+            exit 1
+          fi
+          echo "OK: found refs/tags/${TAG} on origin."
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
