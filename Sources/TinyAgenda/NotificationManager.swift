@@ -1,6 +1,7 @@
 import AppKit
 import TinyAgendaCore
 import Foundation
+import UniformTypeIdentifiers
 import UserNotifications
 
 @MainActor
@@ -60,6 +61,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
                 let content = UNMutableNotificationContent()
                 content.title = event.shortTitle
                 content.body = "Starts in \(minutes) minutes"
+                Self.attachToastIcon(to: content)
                 if let u = event.joinURL {
                     content.userInfo["openURL"] = u.absoluteString
                 }
@@ -76,6 +78,18 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
                 }
             }
         }
+    }
+
+    /// Uses `ToastIcon.png` (generated with AppIcon) so banners show the same artwork as the app icon.
+    private static func attachToastIcon(to content: UNMutableNotificationContent) {
+        guard let url = Bundle.main.url(forResource: "ToastIcon", withExtension: "png") else { return }
+        let opts: [String: Any] = [
+            UNNotificationAttachmentOptionsTypeHintKey: UTType.png.identifier,
+        ]
+        guard let att = try? UNNotificationAttachment(identifier: "tinyagenda.icon", url: url, options: opts) else {
+            return
+        }
+        content.attachments = [att]
     }
 
     private func isInQuietHours(_ date: Date, startHour: Int, endHour: Int) -> Bool {

@@ -10,6 +10,11 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 cp "$BIN_PATH" "$APP/Contents/MacOS/TinyAgenda"
 cp "$ROOT/Support/Info.plist" "$APP/Contents/Info.plist"
+chmod +x "$ROOT/scripts/generate-app-icon.sh"
+"$ROOT/scripts/generate-app-icon.sh"
+mkdir -p "$APP/Contents/Resources"
+cp "$ROOT/Support/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+cp "$ROOT/Support/ToastIcon.png" "$APP/Contents/Resources/ToastIcon.png"
 chmod +x "$APP/Contents/MacOS/TinyAgenda"
 
 # Sparkle (SPM binary target) must be embedded in the app bundle.
