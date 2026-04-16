@@ -4,7 +4,7 @@ Menu bar app for macOS that shows your next Google Calendar meetings using a **s
 
 This project is [open source](../LICENSE) under the MIT License. See the repository root for [contributing](../CONTRIBUTING.md), [security reporting](../SECURITY.md), and [code of conduct](../CODE_OF_CONDUCT.md).
 
-[![CI](https://github.com/KaiTwiggy/tiny-agenda/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+[![CI](https://github.com/KaiTwiggy/tiny-agenda/actions/workflows/ci.yml/badge.svg)](https://github.com/KaiTwiggy/tiny-agenda/actions/workflows/ci.yml)
 
 ## Requirements
 
