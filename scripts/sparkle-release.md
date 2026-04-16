@@ -37,4 +37,6 @@ Without Apple secrets, you still get a release zip; Gatekeeper may prompt users 
 
 ## 4. Version numbers
 
-Bump **`CFBundleShortVersionString`** and **`CFBundleVersion`** in `Support/Info.plist` for each release so Sparkle can compare versions.
+**GitHub Actions (tag builds):** the Release workflow **overwrites** `Support/Info.plist` **`CFBundleShortVersionString`** and **`CFBundleVersion`** from the tag (`v1.0.5` → `1.0.5` for both). Use tags like **`vMAJOR.MINOR.PATCH`** so the built app and Sparkle appcast stay aligned.
+
+**Local builds:** bump **`CFBundleShortVersionString`** and **`CFBundleVersion`** in `Support/Info.plist` yourself, or match what you will tag.

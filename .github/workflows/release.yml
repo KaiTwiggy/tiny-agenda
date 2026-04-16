@@ -61,6 +61,21 @@ jobs:
             exit 1
           fi
 
+      # Sparkle compares appcast sparkle:version / shortVersionString to the built .app. If we only bump the git tag
+      # but leave Support/Info.plist at 1.0.1, the appcast would advertise 1.0.1 while the zip is v1.0.5 — no update offered.
+      - name: Stamp bundle versions from release tag
+        run: |
+          set -euo pipefail
+          RAW="${RELEASE_TAG#v}"
+          if [[ "${RAW}" == "${RELEASE_TAG}" ]]; then
+            echo "::error::RELEASE_TAG must start with v (e.g. v1.0.5). Got: ${RELEASE_TAG}"
+            exit 1
+          fi
+          PLIST="$GITHUB_WORKSPACE/Support/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${RAW}" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${RAW}" "$PLIST"
+          echo "Stamped ${PLIST} → CFBundleShortVersionString=${RAW}, CFBundleVersion=${RAW}"
+
       # Speed up Sparkle (large SPM binary) on repeat runs; first run can still take several minutes.
       - name: Cache Swift build
         uses: actions/cache@v4
