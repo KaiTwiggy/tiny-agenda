@@ -86,6 +86,11 @@ jobs:
           # Drop the embedded auth token; the build job must not need a writable credential.
           persist-credentials: false
 
+      - name: Test appcast generator
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
       - name: Verify appcast.xml (Sparkle feed)
         run: |
           set -euo pipefail

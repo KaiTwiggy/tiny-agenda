@@ -1,0 +1,27 @@
+# Keeps action pins in .github/workflows/*.yml up to date.
+#
+# Actions are pinned by SHA for supply-chain integrity (see release.yml); Dependabot opens
+# a PR whenever a new major/minor floats the tag to a fresh commit, so we can review + merge
+# instead of silently drifting when a mutable `@v2` tag is re-pointed upstream.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(actions)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    # Group minor/patch bumps so a quiet week doesn't generate five noisy PRs.
+    groups:
+      actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"

@@ -4,8 +4,9 @@ import ServiceManagement
 /// Registers this app to launch at user login via `SMAppService` (macOS 13+).
 /// Requires running from a real `.app` bundle (same constraint as notifications).
 enum LaunchAtLogin {
-    /// Persisted user choice (survives quit; used if Settings `onAppear` does not run again).
-    static let userPreferenceKey = "openAtLoginUserPreference"
+    /// Alias so `@AppStorage(LaunchAtLogin.userPreferenceKey)` call sites don't have to spell
+    /// out `Defaults.LaunchAtLogin.openAtLogin`. Real key lives in `Defaults.swift`.
+    static let userPreferenceKey = Defaults.LaunchAtLogin.openAtLogin
 
     static var persistedUserWantsOpenAtLogin: Bool {
         get { UserDefaults.standard.bool(forKey: userPreferenceKey) }

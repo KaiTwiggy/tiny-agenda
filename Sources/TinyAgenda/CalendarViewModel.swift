@@ -101,20 +101,9 @@ final class CalendarViewModel: ObservableObject {
         }
     }
 
-    private enum Keys {
-        static let refreshInterval = "refreshInterval"
-        static let leadMinutes = "leadMinutes"
-        static let quietHoursEnabled = "quietHoursEnabled"
-        static let quietStartHour = "quietStartHour"
-        static let quietEndHour = "quietEndHour"
-        static let menuBarVisibilityLeadMinutes = "menuBarVisibilityLeadMinutes"
-        static let hiddenEventIds = "hiddenEventIds"
-        static let omitTentativeEvents = "omitTentativeEvents"
-        static let omitNeedsActionEvents = "omitNeedsActionEvents"
-        static let menuBarIdleShowsText = "menuBarIdleShowsText"
-        static let menuBarFadeOutMinutes = "menuBarFadeOutMinutes"
-        static let toastNotificationsEnabled = "toastNotificationsEnabled"
-    }
+    /// Local alias so existing call sites (`Keys.refreshInterval`) keep working; canonical
+    /// key list lives in `Defaults.swift`.
+    private typealias Keys = Defaults.Calendar
 
     private var refreshTask: Task<Void, Never>?
     private var menuBarTickCancellable: AnyCancellable?

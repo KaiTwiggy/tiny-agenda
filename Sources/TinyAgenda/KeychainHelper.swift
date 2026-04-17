@@ -25,7 +25,15 @@ enum KeychainHelper {
 
     static func loadFeedURL() -> String? {
         if let s = loadFeedURL(service: service) { return s }
-        return loadFeedURL(service: legacyService)
+        // Opportunistically migrate from the pre-rebrand service so the legacy entry
+        // doesn't linger in the user's Keychain for years after the rename. Best-effort:
+        // failures to copy forward or to delete don't break `loadFeedURL` for the caller.
+        if let legacy = loadFeedURL(service: legacyService) {
+            try? saveFeedURL(legacy)
+            deleteFeedURL(service: legacyService)
+            return legacy
+        }
+        return nil
     }
 
     private static func loadFeedURL(service: String) -> String? {
@@ -44,14 +52,18 @@ enum KeychainHelper {
         return s
     }
 
+    private static func deleteFeedURL(service: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
     static func deleteFeedURL() {
         for svc in [service, legacyService] {
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: svc,
-                kSecAttrAccount as String: account
-            ]
-            SecItemDelete(query as CFDictionary)
+            deleteFeedURL(service: svc)
         }
     }
 

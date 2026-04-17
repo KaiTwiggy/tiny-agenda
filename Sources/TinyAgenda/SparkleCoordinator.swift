@@ -1,24 +1,17 @@
 import AppKit
 import Combine
 import Foundation
+import OSLog
 import Sparkle
-
-/// Central registry of Sparkle key names so typos and renames don't silently break update behavior.
-enum SparkleDefaults {
-    /// `UserDefaults` / `Info.plist` key for Sparkle's last check timestamp.
-    static let lastCheckTime = "SULastCheckTime"
-    /// `UserDefaults` / `Info.plist` key for automatic update checks.
-    static let enableAutomaticChecks = "SUEnableAutomaticChecks"
-    /// `Info.plist` key for the Sparkle EdDSA public key.
-    static let publicEDKey = "SUPublicEDKey"
-    /// `Info.plist` key for the Sparkle appcast feed URL.
-    static let feedURL = "SUFeedURL"
-}
 
 /// Owns Sparkle’s `SPUStandardUpdaterController` and exposes “Check for Updates…”.
 @MainActor
 final class SparkleCoordinator: NSObject, ObservableObject {
     static let shared = SparkleCoordinator()
+
+    /// Unified-logging channel for Sparkle-adjacent events. Filter in Console.app with
+    /// `subsystem:tools.tinyagenda.TinyAgenda category:Sparkle`.
+    private static let log = Logger(subsystem: "tools.tinyagenda.TinyAgenda", category: "Sparkle")
 
     /// Mirrored from Sparkle (`SULastCheckTime` / `lastUpdateCheckDate`).
     @Published private(set) var lastUpdateCheckDate: Date? = UserDefaults.standard.object(forKey: SparkleDefaults.lastCheckTime) as? Date
@@ -125,10 +118,10 @@ extension SparkleCoordinator: SPUUpdaterDelegate {
                 return
             }
             let ns = error as NSError
-            // Avoid logging `userInfo` directly: it may echo the full appcast URL, which is low-risk
-            // but still a repo identifier we don't need in system logs.
-            NSLog(
-                "TinyAgenda Sparkle: failed to load appcast: \(ns.localizedDescription) (domain=\(ns.domain) code=\(ns.code))"
+            // Avoid logging `userInfo` directly: it may echo the full appcast URL. `privacy: .public`
+            // on the domain/code is safe (no PII); everything else is Logger's default (private).
+            Self.log.error(
+                "Failed to load appcast: \(ns.localizedDescription, privacy: .public) (domain=\(ns.domain, privacy: .public) code=\(ns.code, privacy: .public))"
             )
         }
     }

@@ -47,6 +47,34 @@ final class ICSFetcherTests: XCTestCase {
         }
     }
 
+    /// Feed URLs carry Google Calendar tokens in their query string; `FetchError.errorDescription`
+    /// must never surface them so callers can safely log / display `error.localizedDescription`.
+    func testFetchErrorDescriptionsDoNotLeakFeedURL() async throws {
+        let secretToken = "tinyagenda-secret-token-84f9d10e"
+        let secretURL = "https://example.invalid/feed.ics?token=\(secretToken)"
+
+        URLProtocol.registerClass(OversizedURLProtocol.self)
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [OversizedURLProtocol.self]
+        let session = URLSession(configuration: config)
+
+        // Oversize path — hits FetchError.responseTooLarge.
+        do {
+            _ = try await ICSFetcher.fetchString(from: secretURL, session: session, maxBytes: 10)
+            XCTFail("expected error")
+        } catch {
+            XCTAssertFalse(error.localizedDescription.contains(secretToken), "responseTooLarge leaked URL")
+        }
+
+        // Invalid-URL path — hits FetchError.invalidURL.
+        do {
+            _ = try await ICSFetcher.fetchString(from: "http://leak.invalid/?token=\(secretToken)")
+            XCTFail("expected error")
+        } catch {
+            XCTAssertFalse(error.localizedDescription.contains(secretToken), "invalidURL leaked URL")
+        }
+    }
+
     func testRejectsResponseExceedingMaxBytes() async throws {
         URLProtocol.registerClass(OversizedURLProtocol.self)
         let config = URLSessionConfiguration.ephemeral
