@@ -3,6 +3,13 @@
 # No Apple Developer account required: omit optional repository secrets.
 # Optional: MACOS_CODESIGN_IDENTITY — Developer ID signing.
 # Optional: SPARKLE_EDDSA_PRIVATE_KEY — Sparkle generate_keys private key for sign_update.
+#
+# Job layout:
+#   build   — read-only; compiles, signs the zip, uploads artifacts.
+#   publish — contents:write; creates the GitHub Release, uploads the Sparkle
+#             signature, and commits the updated appcast.xml on the default
+#             branch. Kept in its own job so the long-running build cannot use
+#             write credentials.
 
 name: Release
 
@@ -18,29 +25,53 @@ on:
         required: true
         type: string
 
+# Default to least-privilege; the publish job opts into contents:write.
 permissions:
-  contents: write
+  contents: read
+
+env:
+  # SHA-256 of https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/Sparkle-2.6.4.tar.xz.
+  # Leave empty on the first run after bumping Sparkle: the sign step will print the observed value,
+  # then you can paste it here to enforce integrity on every subsequent run.
+  SPARKLE_TAR_SHA256: ""
 
 jobs:
   build:
     runs-on: macos-14
     # Normal run: ~5–25 min. Much longer usually means a hang — cancel and check logs; see scripts/build-app.sh + timing steps.
     timeout-minutes: 45
+    outputs:
+      short_version: ${{ steps.versions.outputs.short_version }}
+      build_version: ${{ steps.versions.outputs.build_version }}
+      min_os: ${{ steps.versions.outputs.min_os }}
+      have_sparkle_signature: ${{ steps.sparkle.outputs.have_signature }}
     env:
       # Tag push: use ref name. Manual run: use the tag you type in the UI.
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
       # Prefer GitHub ZIP archives for tagged deps instead of full git working copies (smaller / faster; helps huge repos like Sparkle).
       SWIFTPM_USE_SOURCE_ARCHIVES: "1"
     steps:
+      - name: Validate release tag shape
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Accept v1, v1.2, v1.2.3, v1.2.3-rc.1 etc. Anchored so user input can't smuggle shell metacharacters.
+          if [[ ! "${TAG}" =~ ^v[0-9]+(\.[0-9]+){0,2}([.-][0-9A-Za-z]+)*$ ]]; then
+            echo "::error::RELEASE_TAG '${TAG}' is not a valid version tag (expected v<semver>)."
+            exit 1
+          fi
+          echo "OK: tag '${TAG}' is well-formed."
+
       - name: Verify tag exists on GitHub (manual runs only)
         if: github.event_name == 'workflow_dispatch'
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          TOKEN="${{ secrets.GITHUB_TOKEN }}"
-          URL="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          if ! git ls-remote "$URL" "refs/tags/${TAG}" | grep -q .; then
+          # Use the REST API (Bearer header is never echoed into a URL, git config, or credential helper).
+          if ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" > /dev/null; then
             echo "::error::Tag '${TAG}' was not found on GitHub (no refs/tags/${TAG})."
             echo "Create it on a commit and push: git tag ${TAG} && git push origin ${TAG}"
             echo "Check spelling — e.g. v1.0.0 is not the same as v1.0.0.0."
@@ -52,6 +83,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
+          # Drop the embedded auth token; the build job must not need a writable credential.
+          persist-credentials: false
 
       - name: Verify appcast.xml (Sparkle feed)
         run: |
@@ -64,17 +97,20 @@ jobs:
       # Sparkle compares appcast sparkle:version / shortVersionString to the built .app. If we only bump the git tag
       # but leave Support/Info.plist at 1.0.1, the appcast would advertise 1.0.1 while the zip is v1.0.5 — no update offered.
       - name: Stamp bundle versions from release tag
+        id: versions
         run: |
           set -euo pipefail
           RAW="${RELEASE_TAG#v}"
-          if [[ "${RAW}" == "${RELEASE_TAG}" ]]; then
-            echo "::error::RELEASE_TAG must start with v (e.g. v1.0.5). Got: ${RELEASE_TAG}"
-            exit 1
-          fi
           PLIST="$GITHUB_WORKSPACE/Support/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${RAW}" "$PLIST"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${RAW}" "$PLIST"
-          echo "Stamped ${PLIST} → CFBundleShortVersionString=${RAW}, CFBundleVersion=${RAW}"
+          MIN_OS=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$PLIST")
+          echo "Stamped ${PLIST} → CFBundleShortVersionString=${RAW}, CFBundleVersion=${RAW}, LSMinimumSystemVersion=${MIN_OS}"
+          {
+            echo "short_version=${RAW}"
+            echo "build_version=${RAW}"
+            echo "min_os=${MIN_OS}"
+          } >> "$GITHUB_OUTPUT"
 
       # Speed up Sparkle (large SPM binary) on repeat runs; first run can still take several minutes.
       - name: Cache Swift build
@@ -82,16 +118,15 @@ jobs:
         with:
           path: |
             .build
-            /Users/runner/Library/Caches/org.swift.swiftpm
-            /Users/runner/Library/org.swift.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/org.swift.swiftpm
           key: ${{ runner.os }}-swift-${{ hashFiles('Package.swift', 'Package.resolved', 'Sources/**/*.swift') }}
           restore-keys: |
             ${{ runner.os }}-swift-
 
-      - name: Build app bundle
+      - name: Resolve Swift packages
         run: |
           set -euo pipefail
-          chmod +x scripts/build-app.sh
           echo "::group::Package pins (if Sparkle version here ≠ Package.swift, this tag points at the wrong commit)"
           cat Package.resolved 2>/dev/null || echo "No Package.resolved — resolve may pick a newer Sparkle and take much longer."
           echo "::endgroup::"
@@ -99,10 +134,19 @@ jobs:
           date -u "+%Y-%m-%dT%H:%M:%SZ resolve start"
           swift package resolve -v
           date -u "+%Y-%m-%dT%H:%M:%SZ resolve done"
+
+      - name: Build app bundle
+        run: |
+          set -euo pipefail
+          chmod +x scripts/build-app.sh
           echo "::notice::Compiling release (linking Sparkle may take several more minutes with sparse logs — not frozen)."
           date -u "+%Y-%m-%dT%H:%M:%SZ build-app start"
           ./scripts/build-app.sh
           date -u "+%Y-%m-%dT%H:%M:%SZ build-app done"
+
+      - name: Verify Sparkle.framework is embedded
+        run: |
+          set -euo pipefail
           F="$GITHUB_WORKSPACE/TinyAgenda.app/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"
           if [[ ! -f "$F" ]]; then
             echo "::error::Sparkle.framework missing from the app bundle (dyld will abort at launch). Re-run build-app.sh locally and ensure Sparkle is embedded."
@@ -134,6 +178,7 @@ jobs:
 
       # Download Sparkle only when signing (same version as Package.swift). Use find — tarball layout can vary.
       - name: Sparkle sign update (optional)
+        id: sparkle
         env:
           SPARKLE_EDDSA_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}
           SPARKLE_VERSION: "2.6.4"
@@ -141,16 +186,42 @@ jobs:
           set -euo pipefail
           if [ -z "${SPARKLE_EDDSA_PRIVATE_KEY:-}" ]; then
             echo "SPARKLE_EDDSA_PRIVATE_KEY not set — skipping Sparkle download and sign_update."
+            echo "have_signature=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+          # Mask the private key explicitly: GitHub auto-masks secret values, but Sparkle's
+          # `sign_update -f` needs a file path. Tell the masker about any line we might echo.
+          echo "::add-mask::${SPARKLE_EDDSA_PRIVATE_KEY}"
+
+          KEY_PATH="$(mktemp -t sparkle_eddsa_private.XXXXXX)"
+          # `trap … EXIT` runs even on set -e failures or CI cancellations so the key never lingers on disk.
+          trap 'rm -f "$KEY_PATH"' EXIT
+          # Write through `install -m 600` so the file never has a readable-by-others window.
+          printf '%s\n' "$SPARKLE_EDDSA_PRIVATE_KEY" | install -m 600 /dev/stdin "$KEY_PATH"
+
           SPARKLE_URL="https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
           echo "Downloading ${SPARKLE_URL}"
           curl -fSL --retry 3 --retry-delay 2 -o /tmp/sparkle.tar.xz "$SPARKLE_URL"
           file /tmp/sparkle.tar.xz
+
+          OBSERVED_SHA="$(shasum -a 256 /tmp/sparkle.tar.xz | awk '{print $1}')"
+          echo "Sparkle tarball sha256: ${OBSERVED_SHA}"
+          if [ -n "${SPARKLE_TAR_SHA256:-}" ]; then
+            if [ "${OBSERVED_SHA}" != "${SPARKLE_TAR_SHA256}" ]; then
+              echo "::error::Sparkle tarball sha256 mismatch. Expected ${SPARKLE_TAR_SHA256}, got ${OBSERVED_SHA}."
+              echo "If this is an intentional Sparkle bump, update SPARKLE_TAR_SHA256 in .github/workflows/release.yml."
+              exit 1
+            fi
+            echo "OK: tarball matches pinned SPARKLE_TAR_SHA256."
+          else
+            echo "::warning::SPARKLE_TAR_SHA256 is unset — paste the value above into release.yml to enforce integrity on future runs."
+          fi
+
           rm -rf /tmp/sparkle-extract
           mkdir -p /tmp/sparkle-extract
           tar -xJf /tmp/sparkle.tar.xz -C /tmp/sparkle-extract
-          SIGN_UPDATE="$(find /tmp/sparkle-extract -name sign_update -type f | head -1)"
+          SIGN_UPDATE="$(find /tmp/sparkle-extract -maxdepth 4 -name sign_update -type f | head -1)"
           if [ -z "${SIGN_UPDATE}" ]; then
             echo "::error::sign_update not found after extracting Sparkle tarball. Listing extract dir:"
             find /tmp/sparkle-extract -type f | head -50 || true
@@ -158,81 +229,97 @@ jobs:
           fi
           chmod +x "$SIGN_UPDATE"
           echo "Using sign_update at ${SIGN_UPDATE}"
-          printf '%s\n' "$SPARKLE_EDDSA_PRIVATE_KEY" > /tmp/sparkle_eddsa_private
-          chmod 600 /tmp/sparkle_eddsa_private
+
           Z="$GITHUB_WORKSPACE/TinyAgenda-${RELEASE_TAG}.zip"
-          "$SIGN_UPDATE" "$Z" -f /tmp/sparkle_eddsa_private | tee "$GITHUB_WORKSPACE/sparkle-signature-${RELEASE_TAG}.txt"
-          rm -f /tmp/sparkle_eddsa_private
+          "$SIGN_UPDATE" "$Z" -f "$KEY_PATH" | tee "$GITHUB_WORKSPACE/sparkle-signature-${RELEASE_TAG}.txt"
+          echo "have_signature=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tinyagenda-release
+          path: |
+            TinyAgenda-${{ env.RELEASE_TAG }}.zip
+            sparkle-signature-${{ env.RELEASE_TAG }}.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: macos-14
+    # `contents: write` is the only elevated permission; keep it scoped to this short job.
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - name: Checkout default branch for appcast update
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          # This checkout needs a writable credential to push the appcast bump.
+          persist-credentials: true
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tinyagenda-release
+          path: ${{ runner.temp }}/release
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           draft: false
           generate_release_notes: true
           tag_name: ${{ env.RELEASE_TAG }}
-          files: TinyAgenda-${{ env.RELEASE_TAG }}.zip
+          files: ${{ runner.temp }}/release/TinyAgenda-${{ env.RELEASE_TAG }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload Sparkle signature to release (optional)
+      - name: Upload Sparkle signature to release
+        if: needs.build.outputs.have_sparkle_signature == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          F="$GITHUB_WORKSPACE/sparkle-signature-${RELEASE_TAG}.txt"
+          F="${RUNNER_TEMP}/release/sparkle-signature-${RELEASE_TAG}.txt"
           if [ ! -f "$F" ]; then
-            echo "No sparkle-signature file — skipping upload."
-            exit 0
+            echo "::error::Sparkle signature artifact missing despite have_sparkle_signature=true."
+            exit 1
           fi
           gh release upload "$RELEASE_TAG" "$F" --clobber
 
-      # Replace appcast.xml with a single <item> (latest release only). Requires SPARKLE_EDDSA_PRIVATE_KEY (same as sign_update).
+      # Replace appcast.xml with a single <item> (latest release only). Requires Sparkle signature from the build job.
       - name: Update appcast.xml on default branch
+        if: needs.build.outputs.have_sparkle_signature == 'true'
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHORT_VERSION: ${{ needs.build.outputs.short_version }}
+          BUILD_VERSION: ${{ needs.build.outputs.build_version }}
+          MIN_OS: ${{ needs.build.outputs.min_os }}
         run: |
           set -euo pipefail
-          SIG_FILE="$GITHUB_WORKSPACE/sparkle-signature-${RELEASE_TAG}.txt"
-          if [[ ! -f "$SIG_FILE" ]]; then
-            echo "No Sparkle signature — skipping appcast update (set repository secret SPARKLE_EDDSA_PRIVATE_KEY)."
-            exit 0
-          fi
-          APP_PLIST="$GITHUB_WORKSPACE/TinyAgenda.app/Contents/Info.plist"
-          if [[ ! -f "$APP_PLIST" ]]; then
-            echo "::error::TinyAgenda.app missing; cannot read versions for appcast."
-            exit 1
-          fi
-          SHORT=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PLIST")
-          BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PLIST")
-          MINOS=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP_PLIST")
-          ZIP="$GITHUB_WORKSPACE/TinyAgenda-${RELEASE_TAG}.zip"
+          SIG_FILE="${RUNNER_TEMP}/release/sparkle-signature-${RELEASE_TAG}.txt"
+          ZIP="${RUNNER_TEMP}/release/TinyAgenda-${RELEASE_TAG}.zip"
           LEN=$(stat -f%z "$ZIP")
-          REPO="${{ github.repository }}"
-          ZIP_URL="https://github.com/${REPO}/releases/download/${RELEASE_TAG}/TinyAgenda-${RELEASE_TAG}.zip"
-          cd "$GITHUB_WORKSPACE"
-          git fetch origin "$DEFAULT_BRANCH"
-          if ! git show "origin/${DEFAULT_BRANCH}:appcast.xml" > appcast.xml; then
-            echo "::error::Could not read appcast.xml from origin/${DEFAULT_BRANCH}. Add appcast.xml to that branch first."
-            exit 1
-          fi
+          ZIP_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/TinyAgenda-${RELEASE_TAG}.zip"
+
           python3 scripts/update-appcast.py \
             --appcast appcast.xml \
-            --short-version "$SHORT" \
-            --build-version "$BUILD" \
-            --min-os "$MINOS" \
+            --short-version "$SHORT_VERSION" \
+            --build-version "$BUILD_VERSION" \
+            --min-os "$MIN_OS" \
             --zip-url "$ZIP_URL" \
             --zip-length "$LEN" \
             --signature-file "$SIG_FILE"
-          cp appcast.xml /tmp/appcast.updated.xml
+
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
-          git checkout -f "$DEFAULT_BRANCH"
-          cp /tmp/appcast.updated.xml appcast.xml
           git add appcast.xml
           if git diff --cached --quiet; then
             echo "appcast.xml unchanged after update — nothing to commit."
             exit 0
           fi
           git commit -m "chore(sparkle): appcast for ${RELEASE_TAG}"
-          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${DEFAULT_BRANCH}"
+          # Uses the checkout credentials persisted above; never echoes the token into logs or config.
+          git push origin "HEAD:${DEFAULT_BRANCH}"

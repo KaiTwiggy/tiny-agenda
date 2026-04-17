@@ -36,6 +36,17 @@ final class ICSFetcherTests: XCTestCase {
         super.tearDown()
     }
 
+    func testRejectsHTTPURL() async throws {
+        do {
+            _ = try await ICSFetcher.fetchString(from: "http://example.invalid/feed.ics")
+            XCTFail("expected error")
+        } catch let e as ICSFetcher.FetchError {
+            if case .invalidURL = e {} else {
+                XCTFail("wrong error: \(e)")
+            }
+        }
+    }
+
     func testRejectsResponseExceedingMaxBytes() async throws {
         URLProtocol.registerClass(OversizedURLProtocol.self)
         let config = URLSessionConfiguration.ephemeral

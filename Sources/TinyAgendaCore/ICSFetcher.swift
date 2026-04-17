@@ -34,7 +34,9 @@ public enum ICSFetcher {
         session: URLSession? = nil,
         maxBytes: Int = defaultMaxResponseBytes
     ) async throws -> String {
-        guard let url = URL(string: urlString), url.scheme == "https" || url.scheme == "http" else {
+        // HTTPS only: ICS feed URLs are secrets (query-string tokens). Refuse http:// so a local
+        // MITM cannot read the token, even if the user pasted a plaintext URL.
+        guard let url = URL(string: urlString), url.scheme?.lowercased() == "https" else {
             throw FetchError.invalidURL
         }
         let sess = session ?? sharedSession

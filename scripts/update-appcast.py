@@ -18,16 +18,34 @@ from pathlib import Path
 
 SPARKLE_NS = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 
+# `sign_update` emits Ed25519 signatures: 64 raw bytes → exactly 88 base64 chars (2 trailing `=`).
+# Pin that shape so a truncated or corrupted signature file fails loudly instead of silently
+# writing an attacker-controlled blob into the appcast.
+_ED25519_SIG_RE = re.compile(r"[A-Za-z0-9+/]{86}==")
+
 
 def parse_signature_file(path: Path) -> str:
     raw = path.read_text(encoding="utf-8", errors="replace")
-    m = re.search(r'sparkle:edSignature="([^"]+)"', raw)
-    if m:
-        return m.group(1).strip()
-    for line in raw.splitlines():
-        line = line.strip()
-        if len(line) >= 64 and re.fullmatch(r"[A-Za-z0-9+/=]+", line):
-            return line
+
+    attr_matches = re.findall(r'sparkle:edSignature="([^"]*)"', raw)
+    if len(attr_matches) > 1:
+        raise SystemExit(
+            f"error: multiple sparkle:edSignature values in {path}; refusing to guess"
+        )
+    if attr_matches:
+        sig = attr_matches[0].strip()
+        if not _ED25519_SIG_RE.fullmatch(sig):
+            raise SystemExit(f"error: sparkle:edSignature in {path} is not a valid Ed25519 base64 signature")
+        return sig
+
+    line_matches = [
+        line.strip() for line in raw.splitlines() if _ED25519_SIG_RE.fullmatch(line.strip())
+    ]
+    if len(line_matches) > 1:
+        raise SystemExit(f"error: multiple signature-shaped lines in {path}; refusing to guess")
+    if line_matches:
+        return line_matches[0]
+
     raise SystemExit(f"error: could not parse EdDSA signature from {path}")
 
 
@@ -45,6 +63,16 @@ def main() -> None:
         help="RFC 2822 date (default: now UTC)",
     )
     args = p.parse_args()
+
+    try:
+        zip_length = int(args.zip_length)
+    except ValueError:
+        sys.exit(f"error: --zip-length must be an integer, got {args.zip_length!r}")
+    if zip_length <= 0:
+        sys.exit(f"error: --zip-length must be positive, got {zip_length}")
+
+    if not args.zip_url.startswith("https://"):
+        sys.exit(f"error: --zip-url must be an https URL, got {args.zip_url!r}")
 
     sig = parse_signature_file(args.signature_file)
 
@@ -77,7 +105,7 @@ def main() -> None:
 
     enclosure = ET.SubElement(item, "enclosure")
     enclosure.set("url", args.zip_url)
-    enclosure.set("length", str(args.zip_length))
+    enclosure.set("length", str(zip_length))
     enclosure.set("type", "application/octet-stream")
     enclosure.set(f"{{{SPARKLE_NS}}}edSignature", sig)
 

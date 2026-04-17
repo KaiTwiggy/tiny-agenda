@@ -2,6 +2,15 @@ import SwiftUI
 import AppKit
 
 struct SettingsView: View {
+    // DateFormatter allocation is relatively expensive; SwiftUI re-evaluates `body` often, so
+    // share a single formatter across renders.
+    private static let lastUpdateCheckFormatter: DateFormatter = {
+        let df = DateFormatter()
+        df.dateStyle = .medium
+        df.timeStyle = .short
+        return df
+    }()
+
     @ObservedObject var viewModel: CalendarViewModel
     @ObservedObject private var sparkle = SparkleCoordinator.shared
     @State private var urlDraft: String = ""
@@ -252,10 +261,7 @@ struct SettingsView: View {
         guard let date = sparkle.lastUpdateCheckDate else {
             return "Never"
         }
-        let df = DateFormatter()
-        df.dateStyle = .medium
-        df.timeStyle = .short
-        return df.string(from: date)
+        return Self.lastUpdateCheckFormatter.string(from: date)
     }
 
     private var launchAtLoginToggleEnabled: Bool {
