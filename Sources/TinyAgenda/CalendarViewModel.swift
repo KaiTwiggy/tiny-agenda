@@ -2,6 +2,7 @@ import AppKit
 import TinyAgendaCore
 import Combine
 import Foundation
+import OSLog
 import UserNotifications
 
 @MainActor
@@ -105,10 +106,20 @@ final class CalendarViewModel: ObservableObject {
     /// key list lives in `Defaults.swift`.
     private typealias Keys = Defaults.Calendar
 
-    private var refreshTask: Task<Void, Never>?
+    /// Unified logger for feed fetch/parse failures. Console.app filter:
+    /// `subsystem:tools.tinyagenda.TinyAgenda category:Feed`. Unified logging coalesces
+    /// repeated identical messages, so a persistently-broken feed doesn't spam the log.
+    private static let feedLog = Logger(subsystem: "tools.tinyagenda.TinyAgenda", category: "Feed")
+
+    /// Background refresh loop. Restarted (and cancelled) whenever the interval changes.
+    private var refreshLoopTask: Task<Void, Never>?
+    /// In-flight `refresh()` call. Cancelled by callers that kick a new refresh before the
+    /// previous one finished (e.g. user edits the feed URL and we want the old fetch to bail
+    /// out rather than overwriting fresh state on completion).
+    private var currentRefreshTask: Task<Void, Never>?
     private var menuBarTickCancellable: AnyCancellable?
-    /// Only the latest `refresh()` may publish results (manual refresh vs timer).
-    private var refreshGeneration = 0
+    /// How many consecutive fetch failures we've seen; drives exponential backoff in the loop.
+    private var consecutiveFailures = 0
 
     init() {
         feedURLString = KeychainHelper.loadFeedURL() ?? ""
@@ -156,7 +167,12 @@ final class CalendarViewModel: ObservableObject {
         NotificationManager.shared.requestAuthorizationIfNeeded()
         startRefreshLoop()
         startMenuBarTick()
-        Task { await refresh() }
+        scheduleRefresh()
+    }
+
+    deinit {
+        refreshLoopTask?.cancel()
+        currentRefreshTask?.cancel()
     }
 
     /// Periodically refresh the menu bar title so countdowns and fade-out update without waiting for the feed refresh.
@@ -177,57 +193,96 @@ final class CalendarViewModel: ObservableObject {
             events = []
             hiddenEventIds = []
             lastSuccessfulRefresh = nil
+            lastError = nil
+            consecutiveFailures = 0
             updateMenuBarTitle()
+            currentRefreshTask?.cancel()
             Task { await NotificationManager.shared.cancelAllPending() }
             return
         }
         try KeychainHelper.saveFeedURL(trimmed)
         feedURLString = trimmed
-        Task { await refresh() }
+        consecutiveFailures = 0
+        scheduleRefresh()
+    }
+
+    /// Kick off a refresh, cancelling any in-flight one so its result can't overwrite the
+    /// new request. Replacement for the old `refreshGeneration` counter.
+    func scheduleRefresh() {
+        currentRefreshTask?.cancel()
+        let task = Task<Void, Never> { [weak self] in
+            await self?.refresh()
+        }
+        currentRefreshTask = task
     }
 
     func startRefreshLoop() {
-        refreshTask?.cancel()
-        refreshTask = Task { [weak self] in
+        refreshLoopTask?.cancel()
+        refreshLoopTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                let sec = await MainActor.run {
-                    let v = self.refreshIntervalSeconds
-                    return v > 15 ? v : 120
-                }
-                try? await Task.sleep(nanoseconds: UInt64(sec * 1_000_000_000))
-                await self.refresh()
+                let delaySeconds = self.nextRefreshDelaySeconds()
+                try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+                if Task.isCancelled { return }
+                // Drive the loop through the same scheduler so external refreshes still cancel
+                // the loop's in-flight fetch instead of racing it.
+                await self.runScheduledRefresh()
             }
         }
     }
 
+    /// Runs a refresh and awaits its completion, going through `currentRefreshTask` so other
+    /// callers can cancel it while it's running.
+    private func runScheduledRefresh() async {
+        currentRefreshTask?.cancel()
+        let task = Task<Void, Never> { [weak self] in
+            await self?.refresh()
+        }
+        currentRefreshTask = task
+        await task.value
+    }
+
+    /// Delay before the next loop iteration. Success → refreshIntervalSeconds. Failure →
+    /// exponential backoff (`interval * 2^failures`) capped at one hour, plus up to ±25%
+    /// jitter so a flaky feed doesn't retry in lockstep every cycle.
+    private func nextRefreshDelaySeconds() -> Double {
+        let base = refreshIntervalSeconds > 15 ? refreshIntervalSeconds : 120
+        guard consecutiveFailures > 0 else { return base }
+        let maxBackoff: Double = 3600
+        let exponent = min(consecutiveFailures, 6)
+        let scale = pow(2.0, Double(exponent))
+        let jitter = Double.random(in: -0.25...0.25) * base
+        return min(maxBackoff, max(base, base * scale + jitter))
+    }
+
     func refresh() async {
-        refreshGeneration += 1
-        let gen = refreshGeneration
         guard !feedURLString.isEmpty else {
             events = []
             lastSuccessfulRefresh = nil
+            lastError = nil
+            consecutiveFailures = 0
             updateMenuBarTitle()
             await NotificationManager.shared.cancelAllPending()
             return
         }
         isRefreshing = true
         lastError = nil
-        defer {
-            if gen == refreshGeneration {
-                isRefreshing = false
-            }
-        }
+        defer { isRefreshing = false }
+
+        if Task.isCancelled { return }
+        let urlString = feedURLString
         do {
-            let ics = try await ICSFetcher.fetchString(from: feedURLString)
+            let ics = try await ICSFetcher.fetchString(from: urlString)
+            if Task.isCancelled { return }
             let parsed = ICSParser.parse(ics)
             let now = Date()
-            guard gen == refreshGeneration else { return }
             events = parsed.filter { $0.end > now }.sorted { $0.start < $1.start }
             let currentIds = Set(events.map(\.id))
             hiddenEventIds = hiddenEventIds.intersection(currentIds)
             lastSuccessfulRefresh = Date()
+            consecutiveFailures = 0
             updateMenuBarTitle()
+            if Task.isCancelled { return }
             await NotificationManager.shared.rescheduleNotifications(
                 events: upcomingVisibleEvents(now: now),
                 leadMinutes: leadMinutes,
@@ -236,9 +291,17 @@ final class CalendarViewModel: ObservableObject {
                 quietEndHour: quietEndHour,
                 toastNotificationsEnabled: toastNotificationsEnabled
             )
+        } catch is CancellationError {
+            return
         } catch {
-            guard gen == refreshGeneration else { return }
+            if Task.isCancelled { return }
+            consecutiveFailures += 1
             lastError = error.localizedDescription
+            // `localizedDescription` is redacted in `ICSFetcher.FetchError` (covered by tests),
+            // so it's safe to mark `.public`. Failure count helps spot flaky-feed trends in Console.
+            Self.feedLog.error(
+                "Refresh failed (attempt #\(self.consecutiveFailures, privacy: .public)): \(error.localizedDescription, privacy: .public)"
+            )
         }
     }
 

@@ -54,7 +54,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
                 let fire = event.start.addingTimeInterval(-Double(minutes * 60))
                 guard fire > now else { continue }
                 if quietHoursEnabled,
-                   isInQuietHours(fire, startHour: quietStartHour, endHour: quietEndHour)
+                   QuietHours.contains(fire, startHour: quietStartHour, endHour: quietEndHour)
                 {
                     continue
                 }
@@ -90,15 +90,6 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             return
         }
         content.attachments = [att]
-    }
-
-    private func isInQuietHours(_ date: Date, startHour: Int, endHour: Int) -> Bool {
-        let h = Calendar.current.component(.hour, from: date)
-        if startHour == endHour { return false }
-        if startHour < endHour {
-            return h >= startHour && h < endHour
-        }
-        return h >= startHour || h < endHour
     }
 
     nonisolated func userNotificationCenter(

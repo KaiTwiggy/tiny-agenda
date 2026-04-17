@@ -68,7 +68,7 @@ struct MenuBarContentView: View {
             }
 
             Button("Refresh") {
-                Task { await viewModel.refresh() }
+                viewModel.scheduleRefresh()
             }
 
             Divider()
