@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-Insert or replace a Sparkle <item> in appcast.xml (newest first).
+Replace Sparkle appcast.xml with exactly one <item>: the latest release only.
+
+(Sparkle supports multiple items, but this feed intentionally carries a single entry so
+the raw GitHub URL always reflects one current version.)
+
 Reads EdDSA signature from sign_update output (raw base64 or sparkle:edSignature="...").
 """
 from __future__ import annotations
@@ -25,13 +29,6 @@ def parse_signature_file(path: Path) -> str:
         if len(line) >= 64 and re.fullmatch(r"[A-Za-z0-9+/=]+", line):
             return line
     raise SystemExit(f"error: could not parse EdDSA signature from {path}")
-
-
-def item_version(elem: ET.Element) -> str | None:
-    for child in elem:
-        if child.tag == f"{{{SPARKLE_NS}}}version":
-            return (child.text or "").strip()
-    return None
 
 
 def main() -> None:
@@ -61,10 +58,9 @@ def main() -> None:
     if channel is None:
         sys.exit("error: no <channel> in appcast")
 
-    # Remove existing item with same sparkle:version (idempotent re-runs).
-    for item in list(channel.findall("item")):
-        if item_version(item) == args.build_version:
-            channel.remove(item)
+    # Only one <item>: drop every previous release entry, then add this build.
+    for old in list(channel.findall("item")):
+        channel.remove(old)
 
     item = ET.Element("item")
     ET.SubElement(item, "title").text = f"TinyAgenda {args.short_version}"
@@ -85,16 +81,7 @@ def main() -> None:
     enclosure.set("type", "application/octet-stream")
     enclosure.set(f"{{{SPARKLE_NS}}}edSignature", sig)
 
-    # Newest first: insert before first <item>, or after metadata.
-    first_item = None
-    for i, child in enumerate(channel):
-        if child.tag == "item":
-            first_item = i
-            break
-    if first_item is not None:
-        channel.insert(first_item, item)
-    else:
-        channel.append(item)
+    channel.append(item)
 
     try:
         ET.indent(tree, space="  ")

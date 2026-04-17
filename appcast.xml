@@ -3,7 +3,7 @@
   <channel>
     <title>TinyAgenda</title>
     <link>https://github.com/KaiTwiggy/tiny-agenda</link>
-    <description>In-app update feed for TinyAgenda. Add a sparkle:item for each release (zip URL, length, edSignature from sign_update). See scripts/sparkle-release.md.</description>
+    <description>In-app update feed for TinyAgenda. The Release workflow keeps a single latest &lt;item&gt; (see scripts/sparkle-release.md).</description>
     <language>en</language>
     <item>
       <title>TinyAgenda 1.0.6</title>

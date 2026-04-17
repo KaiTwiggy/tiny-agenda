@@ -19,9 +19,9 @@ Set **`SUFeedURL`** in `Support/Info.plist` to an **HTTPS** URL that serves your
 
 Use your **default branch** name in the path if it is not `main`.
 
-Commit a baseline **`appcast.xml`** at the repo root (an empty `<channel>` is valid). **After each tagged release**, if the repository secret **`SPARKLE_EDDSA_PRIVATE_KEY`** is set, the [Release workflow](../.github/workflows/release.yml) runs **`scripts/update-appcast.py`**, commits an `<item>` (zip URL, length, `sparkle:edSignature`) to the default branch, and pushes — no manual appcast edit.
+Commit a baseline **`appcast.xml`** at the repo root (channel metadata only is fine). **After each tagged release**, if the repository secret **`SPARKLE_EDDSA_PRIVATE_KEY`** is set, the [Release workflow](../.github/workflows/release.yml) runs **`scripts/update-appcast.py`**, which **replaces** the feed with **one** `<item>` for the latest release only (zip URL, length, `sparkle:edSignature`), commits to the default branch, and pushes.
 
-Without the secret, add `<item>` entries yourself using `sign_update` output or the `sparkle-signature-v*.txt` artifact on the GitHub Release.
+Sparkle can read feeds with multiple items, but this project intentionally ships a **single latest entry** so the raw URL always matches one version. Without the secret, maintain that one `<item>` yourself using `sign_update` or the `sparkle-signature-v*.txt` artifact.
 
 See Sparkle’s [Publishing an update](https://sparkle-project.org/documentation/publishing/) and `generate_appcast` in the Sparkle distribution for more options.
 

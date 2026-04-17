@@ -186,7 +186,7 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" "$F" --clobber
 
-      # Commit appcast item so SUFeedURL (raw GitHub) lists this release. Requires SPARKLE_EDDSA_PRIVATE_KEY (same as sign_update).
+      # Replace appcast.xml with a single <item> (latest release only). Requires SPARKLE_EDDSA_PRIVATE_KEY (same as sign_update).
       - name: Update appcast.xml on default branch
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
